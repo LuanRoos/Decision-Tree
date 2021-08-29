@@ -55,6 +55,9 @@ class node:
 
     def _split_cost(self, split=None):
         if split is None:
+            if self.split is None:
+                print('trying to get split cost of node without specified split')
+                return
             split = self.split
         l, r = self._split_data(split)
         l = self.y[l]
@@ -79,19 +82,40 @@ class node:
         else:
             return best_split
 
+    def tree_cost(self):
+        leaves = []
+        self._get_leaves(leaves)
+        num_obs = np.array([len(l.D) for l in leaves])
+        weights = num_obs / np.sum(num_obs)
+        costs = np.array([l.cost for l in leaves])
+        total_cost = np.sum(costs*weights)
+        return total_cost
+
+    def num_leaves(self):
+        l = []
+        self._get_leaves(l)
+        return len(l)
+
+    def _get_leaves(self, leaves):
+        if self.split is None:
+            leaves.append(self)
+        else:
+            self.l._get_leaves(leaves)
+            self.r._get_leaves(leaves)
+
     def __str__(self):
         return str(self.X[self.D])
 
 class DecisionTree:
     
-    def __init__(self, reg_clas=False, l=0, MAX_SPLITS=1000):
+    def __init__(self, reg_clas=False, MAX_SPLITS=1000):
         self.MAX_SPLITS = MAX_SPLITS
         self.l = 0
         self.reg_clas = reg_clas
         if reg_clas:
             self.cost_f = DecisionTree.entropy
         else:
-            self.cost_f = DecisionTree.mse
+            self.cost_f = DecisionTree.var
 
     def _stop_split_cond(self, leaf):
         if self.reg_clas:
@@ -123,10 +147,26 @@ class DecisionTree:
         self.leaves.insert(leaf_index, p.r)
         self.leaves.insert(leaf_index, p.l)
 
-    def prune(self):
-        print('TODO')
+    def find_best_prune(self):
+        self.leaves = []
+        self.root._get_leaves(self.leaves)
+        before_cost = self.root.tree_cost()
+        T_before = self.root.num_leaves()
+        parents = list(set([l.p for l in self.leaves]))
+        if len(parents) == 1:
+            print('oof')
+            return None
+        p_cost = np.array([p.cost for p in parents])
+        p_tree_cost = np.array([p.tree_cost() for p in parents])
+        p_num_leaves = np.array([p.num_leaves() for p in parents])
+        after_cost = - p_tree_cost + p_cost + before_cost 
+        T_after = - p_num_leaves + (T_before + 1)
+        cost_complexity = after_cost / T_after
+        prune_index = np.argmin(cost_complexity)
+        p = parents[prune_index]
+        return p
 
-    def fit(self, X, y):
+    def fit(self, X, y, verbose=False):
         self.N, self.d = X.shape
         if y.shape != (self.N,):
             print('Incorrect dimensions training data')
@@ -144,7 +184,37 @@ class DecisionTree:
             n_splits += 1
             if n_splits >= self.MAX_SPLITS:
                 break
-        print(f'Number of splits: {n_splits}')
+        if verbose:
+            print(f'Number of splits: {n_splits}')
+
+    # prunes with validation set
+    def prune(self, X_, y_, MAX_PRUNES=20, verbose=False):
+        num_prunes = 0
+        while num_prunes < MAX_PRUNES:
+            yhat = self.predict(X_)
+            if self.reg_clas:
+                before_cost = np.sum(y_ != yhat)
+            else:
+                before_cost = np.mean((y-yhat)**2)
+            p = self.find_best_prune()
+            if p is None:
+                break
+            split = p.split
+            p.split = None
+            yhat = self.predict(X_)
+            if self.reg_clas:
+                after_cost = np.sum(y_ != yhat)
+            else:
+                after_cost = np.mean((y-yhat)**2)
+            if before_cost - after_cost >= 0:
+                p.l = None
+                p.r = None
+                num_prunes += 1
+            else:
+                p.split = split
+                break
+        if verbose:
+            print(f'Number of prunes: {num_prunes}')
     
     def predict(self, X):
         if self.reg_clas:
@@ -176,7 +246,7 @@ class DecisionTree:
         unique, counts = np.unique(y, return_counts=True)
         return unique[np.argmax(counts)]
 
-    def mse(y):
+    def var(y):
         if len(y) == 0:
             return 0
         ybar = np.mean(y)
@@ -196,8 +266,13 @@ if __name__ == '__main__':
     dt.fit(X, y)
     print(dt)
     plt.scatter(X[:, 0], X[:, 1], c=y)
-    plt.show()
+    #plt.show()
     grid = (np.random.rand(10000, 2) - .5) * 10
+    grid_hat = dt.predict(grid)
+    plt.scatter(grid[:, 0], grid[:, 1], c=grid_hat)
+    plt.show()
+    print('prune')
+    dt.find_best_prune()
     grid_hat = dt.predict(grid)
     plt.scatter(grid[:, 0], grid[:, 1], c=grid_hat)
     plt.show()
